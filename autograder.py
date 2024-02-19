@@ -119,21 +119,28 @@ def get_student_name(repo_dir):
         print("does not exist student_info_file")
         return
     with open(student_info_path, 'r') as file:
-        student_info = file.readlines()
-        student_name = student_info[0].strip()
-        student_name_computing_id_map[repo_dir] = student_name
-        print(student_name)
+        try:
+            student_info = file.readlines()
+            student_name = student_info[0].strip() if student_info else repo_dir
+            student_name_computing_id_map[repo_dir] = student_name
+            print(student_name)
+        except Exception as e:
+            print(f"Error reading file: {e}")
+            student_name_computing_id_map[repo_dir] = repo_dir
 
 
 def run_tests(workspace_dir, num_trials,error_list):
     #results should be a map of {repo_dir: {test_name: pass/fail}}
     results = {}
     go_set_env_command = "go env -w GO111MODULE=on"
+    list = [wc, indexer, map_parallelism, reduce_parallelism, job_count, early_exit, crash]
     subprocess.check_output(go_set_env_command, shell=True, env=os.environ)
     for repo_dir in os.listdir(workspace_dir):
         get_student_name(repo_dir)
+        results[repo_dir] = {}
         if repo_dir in error_list.keys():
-            results[repo_dir]=0
+            for test in list:
+                results[repo_dir][test] = 0
             continue
         test_pass_count = {
             wc: 0,
@@ -146,6 +153,15 @@ def run_tests(workspace_dir, num_trials,error_list):
         }
 
         repo_path = os.path.join(workspace_dir, repo_dir)
+        try:
+            commit_count = int(subprocess.check_output(f"git rev-list --count HEAD", shell=True, cwd=repo_path).strip())
+        except subprocess.CalledProcessError:
+            commit_count = 0
+        if commit_count <=1 :
+            for test in list:
+                results[repo_dir][test] = 0
+            continue
+
         test_cmd_wc = f"cd {repo_path}/src/main && bash test-mr-many.sh {num_trials} {wc}"
         test_cmd_indexer = f"cd {repo_path}/src/main && bash test-mr-many.sh {num_trials} {indexer}"
         test_cmd_crash = f"cd {repo_path}/src/main && bash test-mr-many.sh {num_trials} {crash}"
@@ -160,8 +176,6 @@ def run_tests(workspace_dir, num_trials,error_list):
         run_command_and_parse(test_cmd_mtiming, test_pass_count,map_parallelism)
         run_command_and_parse(test_cmd_rtiming, test_pass_count,reduce_parallelism)
         run_command_and_parse(test_cmd_jobcount, test_pass_count,job_count)
-        list=[wc,indexer,map_parallelism,reduce_parallelism,job_count,early_exit,crash]
-        results[repo_dir]={}
         for test in list:
             results[repo_dir][test]=test_pass_count[test]
     return results
@@ -183,7 +197,7 @@ def main(repo_path, workspace_dir, original_tests_dir, branch_name, output_file,
         get_repo_list(repo_path, token)
         with open(repo_path) as f:
             repo_list = [line.strip() for line in f.readlines()]
-            repo_list = repo_list[22:23]
+            repo_list = repo_list[0:10]
 
     clone_repos(repo_list, workspace_dir)
     error_list = checkout_branch(workspace_dir, branch_name)
