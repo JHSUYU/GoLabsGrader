@@ -122,11 +122,11 @@ def get_student_name(repo_dir):
         try:
             student_info = file.readlines()
             student_name = student_info[0].strip() if student_info else repo_dir
-            student_name_computing_id_map[repo_dir] = student_name
+            student_name_computing_id_map[repo_dir] = [student_name,student_info[1].strip()]
             print(student_name)
         except Exception as e:
             print(f"Error reading file: {e}")
-            student_name_computing_id_map[repo_dir] = repo_dir
+            student_name_computing_id_map[repo_dir] = [repo_dir, repo_dir]
 
 
 def run_tests(workspace_dir, num_trials,error_list):
@@ -185,9 +185,9 @@ def write_to_csv(results, output_file):
     #the column in csv file should be student_name, wc, indexer, map_parallelism, reduce_parallelism, job_count, early_exit, crash
     with open(output_file, 'w', newline='') as file:
         writer = csv.writer(file)
-        writer.writerow(["student_name", "wc", "indexer", "map_parallelism", "reduce_parallelism", "job_count", "early_exit", "crash"])
+        writer.writerow(["computing id", "student_name", "wc", "indexer", "map_parallelism", "reduce_parallelism", "job_count", "early_exit", "crash"])
         for repo_name, result in results.items():
-            writer.writerow([student_name_computing_id_map[repo_name], result[wc], result[indexer], result[map_parallelism], result[reduce_parallelism], result[job_count], result[early_exit], result[crash]])
+            writer.writerow([student_name_computing_id_map[repo_name][1],student_name_computing_id_map[repo_name][0], result[wc], result[indexer], result[map_parallelism], result[reduce_parallelism], result[job_count], result[early_exit], result[crash]])
 
 
 def main(repo_path, workspace_dir, original_tests_dir, branch_name, output_file, num_trails, token, single_student_url):
@@ -197,13 +197,12 @@ def main(repo_path, workspace_dir, original_tests_dir, branch_name, output_file,
         get_repo_list(repo_path, token)
         with open(repo_path) as f:
             repo_list = [line.strip() for line in f.readlines()]
-            repo_list = repo_list[0:10]
 
     clone_repos(repo_list, workspace_dir)
     error_list = checkout_branch(workspace_dir, branch_name)
-    replace_test_codes(workspace_dir, original_tests_dir)
-    results = run_tests(workspace_dir, num_trails, error_list)
-    write_to_csv(results, output_file)
+    # replace_test_codes(workspace_dir, original_tests_dir)
+    # results = run_tests(workspace_dir, num_trails, error_list)
+    # write_to_csv(results, output_file)
 
 
 def get_repo_list(repo_list_path, token):
