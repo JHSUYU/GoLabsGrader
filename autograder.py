@@ -3,28 +3,22 @@ import csv
 import os
 import shutil
 from collections import defaultdict
+import re
 
 import requests
 import argparse
 
 organization = "uva-cs4740"
-wc = "test-mr-wc.sh"
-indexer = "test-mr-indexer.sh"
-map_parallelism = "test-mr-mtiming.sh"
-reduce_parallelism = "test-mr-rtiming.sh"
-job_count = "test-mr-jobcount.sh"
-early_exit = "test-mr-early-exit.sh"
-crash = "test-mr-crash.sh"
+test_initial_election = "TestInitialElection2A"
+test_re_election = "TestReElection2A"
+test_many_election = "TestManyElections2A"
 student_name_computing_id_map={}
+student_name_computing_id_lab_map = {}
 
 test_weight = {
-            wc: 5,
-            indexer: 5,
-            map_parallelism: 3,
-            reduce_parallelism: 3,
-            job_count: 2,
-            early_exit: 1,
-            crash: 1,
+            test_initial_election: 1,
+            test_re_election: 1,
+            test_many_election: 1,
         }
 
 
@@ -33,16 +27,19 @@ def run_command(command):
         subprocess.check_output(command, shell=True, stderr=subprocess.STDOUT)
     except subprocess.CalledProcessError as e:
         print(f"Error executing {command}: {e.output}")
-        raise
+
 
 
 def clone_repos(repo_list, workspace_dir):
     create_dir_cmd = f"mkdir -p {workspace_dir}"
     run_command(create_dir_cmd)
 
-    for repo_url in repo_list:
-        repo_name = repo_url.split('/')[-1].strip()
+    for repo_name in repo_list:
         clone_cmd = f"cd {workspace_dir} && git clone https://github.com/uva-cs4740/{repo_name}"
+        run_command(clone_cmd)
+
+    for k,v in student_name_computing_id_lab_map.items():
+        clone_cmd = f"cd {workspace_dir} && git clone https://github.com/uva-cs4740/{k}"
         run_command(clone_cmd)
 
 
@@ -63,16 +60,18 @@ def checkout_branch(workspace_dir, branch_name):
 def replace_test_codes(workspace_dir, original_tests_dir):
     for repo_dir in os.listdir(workspace_dir):
         repo_path = os.path.join(workspace_dir, repo_dir)
-        tests_path = os.path.join(repo_path, 'src/main')
-        mrapps_path = os.path.join(repo_path, 'src/mrapps')
+        tests_path = os.path.join(repo_path, 'src/raft')
         if os.path.isdir(tests_path):
             # delete existing test scripts
-            test_scripts = ['test-mr-crash.sh', 'test-mr-early-exit.sh','test-mr-indexer.sh','test-mr-jobcount.sh','test-mr-mtiming.sh',
-                            'test-mr-rtiming.sh','test-mr-wc.sh','test-mr-many.sh']
+            test_scripts = ['test_test.go']
             for script in test_scripts:
                 script_path = os.path.join(tests_path, script)
                 if os.path.exists(script_path):
                     os.remove(script_path)
+
+            unused_path = os.path.join(repo_path, 'src/main')
+            if os.path.exists(unused_path):
+                shutil.rmtree(unused_path)
 
             # replace with original test scripts
             for script in test_scripts:
@@ -81,30 +80,20 @@ def replace_test_codes(workspace_dir, original_tests_dir):
                     shutil.copy(original_script_path, tests_path)
                 else:
                     shutil.copy2(original_script_path, tests_path)
-        if os.path.exists(mrapps_path):
-            shutil.rmtree(mrapps_path)
-
-        os.makedirs(mrapps_path)
-        test_mrapp = original_tests_dir + "/mrapps"
-
-        for item in os.listdir(test_mrapp):
-            src_path = os.path.join(test_mrapp, item)
-            dst_path = os.path.join(mrapps_path, item)
-            if os.path.isdir(src_path):
-                shutil.copytree(src_path, dst_path)
-            else:
-                shutil.copy2(src_path, dst_path)
 
 
 
-def run_command_and_parse(test_cmd, dict, key):
+def run_command_and_parse(test_cmd, dict, key, num_trials):
     print("run_command_and_parse")
-    try:
-        output_content = subprocess.check_output(test_cmd, shell=True, env=os.environ)
-        dict[key] = 1
-        print(test_cmd+"pass")
-    except subprocess.CalledProcessError as e:
-        dict[key] = 0
+    for i in range(int(num_trials)):
+        try:
+            output_content = subprocess.check_output(test_cmd, shell=True, env=os.environ)
+            dict[key] = 1
+            print(test_cmd+"pass")
+            return
+        except subprocess.CalledProcessError as e:
+            print(test_cmd+"fail")
+            continue
 
 
 def get_student_name(repo_dir):
@@ -122,34 +111,34 @@ def get_student_name(repo_dir):
         try:
             student_info = file.readlines()
             student_name = student_info[0].strip() if student_info else repo_dir
-            student_name_computing_id_map[repo_dir] = [student_name,student_info[1].strip()]
+            student_name_computing_id_map[repo_dir] = student_name
             print(student_name)
         except Exception as e:
             print(f"Error reading file: {e}")
-            student_name_computing_id_map[repo_dir] = [repo_dir, repo_dir]
+            student_name_computing_id_map[repo_dir] = repo_dir
 
 
 def run_tests(workspace_dir, num_trials,error_list):
     #results should be a map of {repo_dir: {test_name: pass/fail}}
     results = {}
-    go_set_env_command = "go env -w GO111MODULE=on"
-    list = [wc, indexer, map_parallelism, reduce_parallelism, job_count, early_exit, crash]
+    go_set_env_command = "/usr/local/bin/go env -w GO111MODULE=on"
+    # goroot = subprocess.check_output(["go", "env", "GOROOT"]).strip().decode()
+    # gopath = subprocess.check_output(["go", "env", "GOPATH"]).strip().decode()
+    #
+    # os.environ["GOROOT"] = goroot
+    # os.environ["GOPATH"] = gopath
+    list = [test_initial_election, test_re_election, test_many_election]
     subprocess.check_output(go_set_env_command, shell=True, env=os.environ)
     for repo_dir in os.listdir(workspace_dir):
-        get_student_name(repo_dir)
         results[repo_dir] = {}
         if repo_dir in error_list.keys():
             for test in list:
                 results[repo_dir][test] = 0
             continue
         test_pass_count = {
-            wc: 0,
-            indexer: 0,
-            map_parallelism: 0,
-            reduce_parallelism: 0,
-            job_count: 0,
-            early_exit: 0,
-            crash: 0,
+            test_initial_election: 0,
+            test_re_election: 0,
+            test_many_election: 0,
         }
 
         repo_path = os.path.join(workspace_dir, repo_dir)
@@ -162,20 +151,13 @@ def run_tests(workspace_dir, num_trials,error_list):
                 results[repo_dir][test] = 0
             continue
 
-        test_cmd_wc = f"cd {repo_path}/src/main && bash test-mr-many.sh {num_trials} {wc}"
-        test_cmd_indexer = f"cd {repo_path}/src/main && bash test-mr-many.sh {num_trials} {indexer}"
-        test_cmd_crash = f"cd {repo_path}/src/main && bash test-mr-many.sh {num_trials} {crash}"
-        test_cmd_early_exit = f"cd {repo_path}/src/main && bash test-mr-many.sh {num_trials} {early_exit}"
-        test_cmd_mtiming = f"cd {repo_path}/src/main && bash test-mr-many.sh {num_trials} {map_parallelism}"
-        test_cmd_rtiming = f"cd {repo_path}/src/main && bash test-mr-many.sh {num_trials} {reduce_parallelism}"
-        test_cmd_jobcount = f"cd {repo_path}/src/main && bash test-mr-many.sh {num_trials} {job_count}"
-        run_command_and_parse(test_cmd_wc, test_pass_count,wc)
-        run_command_and_parse(test_cmd_indexer, test_pass_count,indexer)
-        run_command_and_parse(test_cmd_crash, test_pass_count,crash)
-        run_command_and_parse(test_cmd_early_exit, test_pass_count,early_exit)
-        run_command_and_parse(test_cmd_mtiming, test_pass_count,map_parallelism)
-        run_command_and_parse(test_cmd_rtiming, test_pass_count,reduce_parallelism)
-        run_command_and_parse(test_cmd_jobcount, test_pass_count,job_count)
+
+        test_cmd_initial_election = f"cd {repo_path}/src/raft  && /usr/local/bin/go test -run {test_initial_election}"
+        test_cmd_re_election = f"cd {repo_path}/src/raft  && /usr/local/bin/go test -run {test_re_election}"
+        test_cmd_many_election = f"cd {repo_path}/src/raft && /usr/local/bin/go test -run {test_many_election}"
+        run_command_and_parse(test_cmd_initial_election, test_pass_count,test_initial_election,num_trials)
+        run_command_and_parse(test_cmd_re_election, test_pass_count, test_re_election, num_trials)
+        run_command_and_parse(test_cmd_many_election, test_pass_count,test_many_election, num_trials)
         for test in list:
             results[repo_dir][test]=test_pass_count[test]
     return results
@@ -185,24 +167,41 @@ def write_to_csv(results, output_file):
     #the column in csv file should be student_name, wc, indexer, map_parallelism, reduce_parallelism, job_count, early_exit, crash
     with open(output_file, 'w', newline='') as file:
         writer = csv.writer(file)
-        writer.writerow(["computing id", "student_name", "wc", "indexer", "map_parallelism", "reduce_parallelism", "job_count", "early_exit", "crash"])
+        writer.writerow(["student_name", "student_id",test_initial_election, test_re_election, test_many_election])
         for repo_name, result in results.items():
-            writer.writerow([student_name_computing_id_map[repo_name][1],student_name_computing_id_map[repo_name][0], result[wc], result[indexer], result[map_parallelism], result[reduce_parallelism], result[job_count], result[early_exit], result[crash]])
+            writer.writerow([student_name_computing_id_lab_map[repo_name][1], student_name_computing_id_lab_map[repo_name][0], result[test_initial_election], result[test_re_election], result[test_many_election]])
 
+def get_repo_list_from_file(student_id_lab_list):
+    with open(student_id_lab_list, 'r') as file:
+        reader = csv.reader(file)
+        start = 0
+        end =2
+        for row in reader:
+            if start>end:
+                break
+            start+=1
+            print(row[1])
+            print(row[0])
+            print(row[2])
+            student_id = re.sub(r'[^a-zA-Z0-9\-\s_]', '', row[1])
+            student_name = re.sub(r'[^a-zA-Z0-9\-\s_]', '', row[0])
+            repo_name = re.sub(r'[^a-zA-Z0-9\-\s_/:]', '', row[2].split('/')[-1])
+            student_name_computing_id_lab_map[repo_name] = [student_id, student_name]
+    file.close()
 
-def main(repo_path, workspace_dir, original_tests_dir, branch_name, output_file, num_trails, token, single_student_url):
+def main(repo_path, workspace_dir, original_tests_dir, branch_name, output_file, num_trails, token, single_student_url, student_id_lab_list):
+    repo_list = []
     if single_student_url != None:
         repo_list = [single_student_url]
+    elif student_id_lab_list != None:
+        get_repo_list_from_file(student_id_lab_list)
     else:
-        get_repo_list(repo_path, token)
-        with open(repo_path) as f:
-            repo_list = [line.strip() for line in f.readlines()]
-
+        print("Error! Please provide either single_student_url or student_id_lab_list. Exiting...")
     clone_repos(repo_list, workspace_dir)
     error_list = checkout_branch(workspace_dir, branch_name)
-    # replace_test_codes(workspace_dir, original_tests_dir)
-    # results = run_tests(workspace_dir, num_trails, error_list)
-    # write_to_csv(results, output_file)
+    replace_test_codes(workspace_dir, original_tests_dir)
+    results = run_tests(workspace_dir, num_trails, error_list)
+    write_to_csv(results, output_file)
 
 
 def get_repo_list(repo_list_path, token):
@@ -268,6 +267,7 @@ if __name__ == "__main__":
                         help="the file to store students' grade")
     parser.add_argument("--num_trails", required=False, default=1, help="the number to repeat the test")
     parser.add_argument("--single_student_url", required=False, help="the url of a single student")
+    parser.add_argument("--student_id_lab_list", required=False, default="student_id_lab_list.csv")
     args = parser.parse_args()
     github_token = args.github_token
     repo_path = args.repo_path
@@ -277,8 +277,10 @@ if __name__ == "__main__":
     output_file = args.output_file
     num_trails = args.num_trails
     current_path = os.environ.get("PATH", "")
-    new_path = get_go_bin_path() + os.pathsep + current_path
+    new_path = "/usr/local/bin/go" + os.pathsep + current_path
+    student_id_lab_list = args.student_id_lab_list
     os.environ["PATH"] = new_path
+    print(os.environ["PATH"])
 
     if os.path.exists(workspace_dir):
         shutil.rmtree(workspace_dir)
@@ -287,4 +289,4 @@ if __name__ == "__main__":
         os.remove(output_file)
 
     main(repo_path, workspace_dir, original_tests_dir, branch_name, output_file, num_trails, github_token,
-         args.single_student_url)
+         args.single_student_url, student_id_lab_list)
